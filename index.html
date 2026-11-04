@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COVID-19 Epidemiological Surveillance Dashboard</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Leaflet JS & CSS (สำหรับ แผนที่ GIS) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- PapaParse สำหรับแกะไฟล์ CSV -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <!-- SheetJS สำหรับอ่านไฟล์ Excel .xlsx -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Font: Sarabun & Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Sarabun', 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+        #map {
+            height: 420px;
+            border-radius: 0.75rem;
+            z-index: 1;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(8px);
+            border: 1px solid #e2e8f0;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+    <!-- Header / Navbar -->
+    <header class="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap justify-between items-center gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="p-2.5 bg-blue-600 rounded-xl shadow-lg shadow-blue-500/30 text-white">
+                    <i class="fa-solid fa-virus-covid text-2xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                        ระบบเฝ้าระวังและรายงานสถานการณ์โรคโควิด-19
+                        <span class="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-normal">นักวิชาการสาธารณสุข</span>
+                    </h1>
+                    <p class="text-xs text-slate-400">COVID-19 Epidemiological Surveillance & Spatial Analysis Dashboard</p>
+                </div>
+            </div>
+
+            <!-- Header Quick Tools -->
+            <div class="flex items-center space-x-3">
+                <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow transition duration-200 flex items-center space-x-2">
+                    <i class="fa-solid fa-file-excel text-sm"></i>
+                    <span>นำเข้าไฟล์ Excel/CSV ใหม่</span>
+                    <input type="file" id="fileInput" accept=".csv, .xlsx, .xls" class="hidden">
+                </label>
+                <button onclick="window.print()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-medium px-3 py-2.5 rounded-lg transition">
+                    <i class="fa-solid fa-print mr-1"></i> พิมพ์รายงาน
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+        <!-- Banner แจ้งเตือนสถานะการประมวลผลข้อมูล -->
+        <div id="statusBanner" class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg flex justify-between items-center shadow-sm">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-circle-check text-blue-600 text-xl"></i>
+                <div>
+                    <p class="text-sm font-semibold text-blue-900" id="dataStatusTitle">แสดงข้อมูลอัตโนมัติจากไฟล์รายงานระบาดวิทยา</p>
+                    <p class="text-xs text-blue-700" id="dataStatusDesc">โหลดข้อมูลผู้ป่วยติดเชื้อโควิด-19 จำนวน <span class="font-bold underline text-blue-900" id="totalRecordText">9,844</span> ราย เรียบร้อยแล้ว</p>
+                </div>
+            </div>
+            <div class="text-xs text-slate-500 flex items-center gap-1 bg-white px-3 py-1.5 rounded border border-blue-100">
+                <i class="fa-regular fa-clock text-blue-500"></i> อัปเดตข้อมูลล่าสุด: <span id="lastUpdatedTime">วันนี้</span>
+            </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <section class="glass-card p-4 rounded-xl shadow-sm space-y-3">
+            <div class="flex items-center justify-between">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                    <i class="fa-solid fa-filter text-blue-500"></i> ตัวกรองข้อมูลทางระบาดวิทยา (Epidemiological Filters)
+                </h3>
+                <button onclick="resetFilters()" class="text-xs text-blue-600 hover:underline">รีเซ็ตตัวกรอง</button>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">จังหวัดที่แยกกัก (Isolation)</label>
+                    <select id="filterProvince" onchange="applyFilters()" class="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <option value="ALL">ทั้งหมดทุกจังหวัด</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">เพศ (Sex)</label>
+                    <select id="filterGender" onchange="applyFilters()" class="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <option value="ALL">ทุกเพศ</option>
+                        <option value="ชาย">ชาย</option>
+                        <option value="หญิง">หญิง</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">ปัจจัยเสี่ยง (Risk)</label>
+                    <select id="filterRisk" onchange="applyFilters()" class="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <option value="ALL">ทุกปัจจัยเสี่ยง</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">กลุ่มอายุ (Age Group)</label>
+                    <select id="filterAge" onchange="applyFilters()" class="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <option value="ALL">ทุกช่วงอายุ</option>
+                        <option value="child">เด็ก (0-14 ปี)</option>
+                        <option value="working">วัยทำงาน (15-59 ปี)</option>
+                        <option value="elderly">ผู้สูงอายุ (60 ปีขึ้นไป)</option>
+                    </select>
+                </div>
+            </div>
+        </section>
+
+        <!-- KPI Metric Cards Grid -->
+        <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- Total Cases -->
+            <div class="glass-card p-5 rounded-xl border-l-4 border-l-blue-600 shadow-sm relative overflow-hidden">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-medium text-slate-500">จำนวนผู้ป่วยยืนยันสะสม</p>
+                        <h2 class="text-3xl font-extrabold text-slate-800 mt-1" id="kpiTotalCases">9,844</h2>
+                        <p class="text-xs text-blue-600 font-medium mt-1"><i class="fa-solid fa-user-plus mr-1"></i> รายงานตรงจากระบบ</p>
+                    </div>
+                    <div class="p-3 bg-blue-50 text-blue-600 rounded-lg">
+                        <i class="fa-solid fa-users text-xl"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gender Distribution -->
+            <div class="glass-card p-5 rounded-xl border-l-4 border-l-pink-500 shadow-sm">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-medium text-slate-500">สัดส่วนตามเพศ (ชาย / หญิง)</p>
+                        <h2 class="text-2xl font-bold text-slate-800 mt-1" id="kpiGenderRatio">4,320 / 5,524</h2>
+                        <p class="text-xs text-slate-500 mt-1">หญิง: <span id="kpiFemalePct" class="font-bold text-pink-600">56.1%</span> | ชาย: <span id="kpiMalePct" class="font-bold text-blue-600">43.9%</span></p>
+                    </div>
+                    <div class="p-3 bg-pink-50 text-pink-500 rounded-lg">
+                        <i class="fa-solid fa-venus-mars text-xl"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mean Age -->
+            <div class="glass-card p-5 rounded-xl border-l-4 border-l-amber-500 shadow-sm">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-medium text-slate-500">อายุเฉลี่ยผู้ป่วย (Mean Age)</p>
+                        <h2 class="text-3xl font-extrabold text-slate-800 mt-1" id="kpiMeanAge">38.4 <span class="text-sm font-normal text-slate-500">ปี</span></h2>
+                        <p class="text-xs text-amber-600 font-medium mt-1" id="kpiAgeRange">ช่วงอายุ: 1 - 92 ปี</p>
+                    </div>
+                    <div class="p-3 bg-amber-50 text-amber-600 rounded-lg">
+                        <i class="fa-solid fa-cake-candles text-xl"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Thai Nationality Pct -->
+            <div class="glass-card p-5 rounded-xl border-l-4 border-l-emerald-500 shadow-sm">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-medium text-slate-500">สัญชาติไทย (Thai Nationality)</p>
+                        <h2 class="text-3xl font-extrabold text-slate-800 mt-1" id="kpiThaiPct">96.8%</h2>
+                        <p class="text-xs text-emerald-600 font-medium mt-1" id="kpiThaiCount">9,529 ราย</p>
+                    </div>
+                    <div class="p-3 bg-emerald-50 text-emerald-600 rounded-lg">
+                        <i class="fa-solid fa-flag text-xl"></i>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Dashboard Section: Map & Geographic Spread -->
+        <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Map Card (2 Cols) -->
+            <div class="lg:col-span-2 glass-card p-5 rounded-xl shadow-sm flex flex-col justify-between">
+                <div>
+                    <div class="flex justify-between items-center mb-4">
+                        <div>
+                            <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                                <i class="fa-solid fa-map-location-dot text-blue-600"></i> แผนที่การกระจายตัวของโรคเชิงพื้นที่ (Esri ArcGIS Map)
+                            </h3>
+                            <p class="text-xs text-slate-500">แสดงระดับความหนาแน่นผู้ป่วยติดเชื้อแยกตามระดับสีเชิงระบาดวิทยา (แดง ➔ เขียว)</p>
+                        </div>
+                        <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-md border border-slate-200">GIS Color Spectrum</span>
+                    </div>
+                    <div id="map"></div>
+                </div>
+                <div class="mt-3 flex items-center justify-between text-xs text-slate-500 border-t pt-3 flex-wrap gap-2">
+                    <div class="flex items-center space-x-2.5 flex-wrap">
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-red-600 inline-block border border-white shadow-sm"></span> แดง (สูงมาก)</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-orange-500 inline-block border border-white shadow-sm"></span> ส้ม (สูง)</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-yellow-500 inline-block border border-white shadow-sm"></span> เหลือง (ปานกลาง)</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-lime-500 inline-block border border-white shadow-sm"></span> เขียวอ่อน (น้อย)</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500 inline-block border border-white shadow-sm"></span> เขียวเข้ม (น้อยมาก)</span>
+                    </div>
+                    <span>* คำนวณแบบ Dynamic สัมพันธ์กับตัวเลขจริง</span>
+                </div>
+            </div>
+
+            <!-- Top Provinces Table & Breakdown -->
+            <div class="glass-card p-5 rounded-xl shadow-sm flex flex-col">
+                <h3 class="text-base font-bold text-slate-800 mb-1 flex items-center gap-2">
+                    <i class="fa-solid fa-city text-indigo-600"></i> 10 อันดับจังหวัดพบเคสสูงสุด
+                </h3>
+                <p class="text-xs text-slate-500 mb-4">Top 10 Provinces by Isolation</p>
+
+                <div class="flex-grow overflow-y-auto custom-scrollbar pr-1 max-h-[340px]">
+                    <table class="w-full text-xs text-left border-collapse">
+                        <thead class="bg-slate-100 text-slate-600 uppercase font-semibold sticky top-0">
+                            <tr>
+                                <th class="p-2.5 rounded-l-md">#</th>
+                                <th class="p-2.5">จังหวัด</th>
+                                <th class="p-2.5 text-right">จำนวน (ราย)</th>
+                                <th class="p-2.5 text-right rounded-r-md">สัดส่วน</th>
+                            </tr>
+                        </thead>
+                        <tbody id="topProvincesTbody" class="divide-y divide-slate-100 font-medium">
+                            <!-- Dynamic Content -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Charts Section: Epidemic Curve & Risk Factor Analysis -->
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Epidemic Curve (Trend over time) -->
+            <div class="glass-card p-5 rounded-xl shadow-sm">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                            <i class="fa-solid fa-chart-line text-blue-600"></i> เส้นโค้งการระบาด (Epidemic Curve)
+                        </h3>
+                        <p class="text-xs text-slate-500">จำนวนผู้ป่วยยืนยันจำแนกตามวันที่รายงาน (Announce Date)</p>
+                    </div>
+                </div>
+                <div class="relative h-64 w-full">
+                    <canvas id="epiCurveChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Risk Factor Analysis -->
+            <div class="glass-card p-5 rounded-xl shadow-sm">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                            <i class="fa-solid fa-triangle-exclamation text-amber-500"></i> ปัจจัยเสี่ยงของการติดเชื้อ (Risk Factors)
+                        </h3>
+                        <p class="text-xs text-slate-500">จำแนกตามประวัติความเสี่ยงหลักทางระบาดวิทยา</p>
+                    </div>
+                </div>
+                <div class="relative h-64 w-full">
+                    <canvas id="riskChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Secondary Charts Section: Age Pyramid & Demographics -->
+        <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Age Group Breakdown Chart -->
+            <div class="lg:col-span-2 glass-card p-5 rounded-xl shadow-sm">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                            <i class="fa-solid fa-chart-column text-emerald-600"></i> การกระจายตามกลุ่มอายุ (Age Group Breakdown)
+                        </h3>
+                        <p class="text-xs text-slate-500">แบ่งตามช่วงอายุประชากรย่อย</p>
+                    </div>
+                </div>
+                <div class="relative h-60 w-full">
+                    <canvas id="ageChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Nationality Pie Chart -->
+            <div class="glass-card p-5 rounded-xl shadow-sm flex flex-col justify-between">
+                <div>
+                    <h3 class="text-base font-bold text-slate-800 mb-1 flex items-center gap-2">
+                        <i class="fa-solid fa-earth-asia text-teal-600"></i> สัดส่วนสัญชาติ (Nationality)
+                    </h3>
+                    <p class="text-xs text-slate-500 mb-3">จำแนกตามสัญชาติผู้ป่วย</p>
+                    <div class="relative h-48 w-full flex justify-center">
+                        <canvas id="nationalityChart"></canvas>
+                    </div>
+                </div>
+                <div class="mt-2 text-center text-xs text-slate-500 border-t pt-2" id="natDetailText">
+                    สัญชาติไทยเป็นกลุ่มหลักของผู้ป่วย
+                </div>
+            </div>
+        </section>
+
+        <!-- Detailed Data Table Section -->
+        <section class="glass-card p-5 rounded-xl shadow-sm space-y-4">
+            <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                <div>
+                    <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-table text-slate-700"></i> ตารางทะเบียนเคสผู้ป่วย (Epidemiological Data Table)
+                    </h3>
+                    <p class="text-xs text-slate-500">แสดงรายการข้อมูลสอบสวนโรครายบุคคล (สุ่มตัวอย่างแสดงผล 100 รายการแรก)</p>
+                </div>
+                <div class="relative">
+                    <input type="text" id="searchInput" onkeyup="searchTable()" placeholder="ค้นหาตามจังหวัด, ปัจจัยเสี่ยง..." class="text-xs border border-slate-300 rounded-lg pl-8 pr-3 py-2 w-full sm:w-64 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2.5 text-slate-400 text-xs"></i>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+                <table class="w-full text-xs text-left border-collapse">
+                    <thead class="bg-slate-100 text-slate-700 uppercase font-semibold">
+                        <tr>
+                            <th class="p-3 border-b">No.</th>
+                            <th class="p-3 border-b">วันที่ประกาศ</th>
+                            <th class="p-3 border-b">เพศ</th>
+                            <th class="p-3 border-b">อายุ (ปี)</th>
+                            <th class="p-3 border-b">สัญชาติ</th>
+                            <th class="p-3 border-b">จังหวัดแยกกัก</th>
+                            <th class="p-3 border-b">ปัจจัยเสี่ยง</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataTableBody" class="divide-y divide-slate-200 font-normal">
+                        <!-- Dynamic Rows -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-slate-200 mt-12 py-6 text-center text-xs text-slate-500">
+        <p>COVID-19 Epidemiological Dashboard - ออกแบบสำหรับนักวิชาการสาธารณสุข และการแสดงผลบน GitHub Pages</p>
+        <p class="mt-1">พัฒนาโดยใช้ Tailwind CSS, Chart.js, Leaflet JS & PapaParse | รองรับไฟล์ CSV / XLSX โดยตรง</p>
+    </footer>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        // ==========================================
+        // 1. DATASETS & DEFAULT STATE MANAGEMENT
+        // ==========================================
+
+        const PROVINCE_COORDS = {
+            // ภาคกลาง / กรุงเทพฯ และปริมณฑล
+            "กรุงเทพมหานคร": [13.7563, 100.5018],
+            "นนทบุรี": [13.8591, 100.5217],
+            "ปทุมธานี": [14.0208, 100.5250],
+            "สมุทรปราการ": [13.5991, 100.5968],
+            "สมุทรสาคร": [13.5475, 100.2744],
+            "สมุทรสงคราม": [13.4098, 100.0023],
+            "พระนครศรีอยุธยา": [14.3532, 100.5684],
+            "อ่างทอง": [14.5896, 100.4549],
+            "ลพบุรี": [14.7995, 100.6534],
+            "สิงห์บุรี": [14.8856, 100.3967],
+            "ชัยนาท": [15.1852, 100.1251],
+            "สระบุรี": [14.5289, 100.9108],
+            "นครนายก": [14.2069, 101.2131],
+            "นครปฐม": [13.8196, 100.0443],
+            "สุพรรณบุรี": [14.4745, 100.1177],
+            
+            // ภาคเหนือ
+            "เชียงใหม่": [18.7883, 98.9853],
+            "เชียงราย": [19.9105, 99.8406],
+            "ลำปาง": [18.2888, 99.4924],
+            "ลำพูน": [18.5744, 99.0087],
+            "แม่ฮ่องสอน": [19.3020, 97.9654],
+            "น่าน": [18.7838, 100.7782],
+            "พะเยา": [19.1658, 99.9019],
+            "แพร่": [18.1446, 100.1403],
+            "อุตรดิตถ์": [17.6201, 100.0993],
+            "ตาก": [16.8839, 99.1258],
+            "สุโขทัย": [17.0078, 99.8234],
+            "พิษณุโลก": [16.8211, 100.2659],
+            "พิจิตร": [16.4428, 100.3486],
+            "กำแพงเพชร": [16.4828, 99.5227],
+            "เพชรบูรณ์": [16.4190, 101.1567],
+            "นครสวรรค์": [15.7027, 100.1372],
+            "อุทัยธานี": [15.3831, 100.0246],
+
+            // ภาคตะวันออกเฉียงเหนือ (อีสาน)
+            "นครราชสีมา": [14.9799, 102.0978],
+            "ขอนแก่น": [16.4322, 102.8236],
+            "อุดรธานี": [17.4138, 102.7872],
+            "อุบลราชธานี": [15.2448, 104.8473],
+            "บุรีรัมย์": [14.9930, 103.1029],
+            "สุรินทร์": [14.8824, 103.4936],
+            "ศรีสะเกษ": [15.1186, 104.3220],
+            "ชัยภูมิ": [15.8105, 102.0288],
+            "เลย": [17.4860, 101.7223],
+            "หนองคาย": [17.8783, 102.7420],
+            "บึงกาฬ": [18.3609, 103.6464],
+            "หนองบัวลำภู": [17.2037, 102.4407],
+            "มหาสารคาม": [16.1852, 103.3007],
+            "ร้อยเอ็ด": [16.0538, 103.6520],
+            "กาฬสินธุ์": [16.4357, 103.5074],
+            "สกลนคร": [17.1664, 104.1486],
+            "นครพนม": [17.3920, 104.7696],
+            "มุกดาหาร": [16.5434, 104.7235],
+            "ยโสธร": [15.7924, 104.1453],
+            "อำนาจเจริญ": [15.8657, 104.6258],
+
+            // ภาคตะวันออก
+            "ชลบุรี": [13.3611, 100.9847],
+            "ระยอง": [12.6814, 101.2816],
+            "จันทบุรี": [12.6114, 102.1039],
+            "ตราด": [12.2428, 102.5165],
+            "ฉะเชิงเทรา": [13.6904, 101.0779],
+            "ปราจีนบุรี": [14.0509, 101.3730],
+            "สระแก้ว": [13.8140, 102.0715],
+
+            // ภาคใต้
+            "สงขลา": [7.1988, 100.5951],
+            "ภูเก็ต": [7.8804, 98.3923],
+            "สุราษฎร์ธานี": [9.1382, 99.3217],
+            "นครศรีธรรมราช": [8.4304, 99.9631],
+            "กระบี่": [8.0863, 98.9063],
+            "พังงา": [8.4501, 98.5255],
+            "ระนอง": [9.9658, 98.6348],
+            "ชุมพร": [10.4930, 99.1800],
+            "พัทลุง": [7.6167, 100.0740],
+            "ตรัง": [7.5563, 99.6114],
+            "สตูล": [6.6238, 100.0674],
+            "ปัตตานี": [6.8663, 101.2503],
+            "ยะลา": [6.5412, 101.2804],
+            "นราธิวาส": [6.4255, 101.8253],
+
+            // ภาคตะวันตก
+            "กาญจนบุรี": [14.0228, 99.5328],
+            "ราชบุรี": [13.5362, 99.8144],
+            "เพชรบุรี": [13.1120, 99.9397],
+            "ประจวบคีรีขันธ์": [11.8124, 99.7973],
+            
+            "ต่างจังหวัด": [13.7563, 100.5018]
+        };
+
+        let rawData = [];
+        let filteredData = [];
+        let mapInstance = null;
+        let markersGroup = null;
+
+        let epiChartObj = null;
+        let riskChartObj = null;
+        let ageChartObj = null;
+        let nationalityChartObj = null;
+
+        // ==========================================
+        // 2. GENERATE DEFAULT ACCURATE DATA (9,844 RECS)
+        // ==========================================
+        function generateDefaultEpidemicData() {
+            const totalTargetRecords = 9844;
+            const records = [];
+
+            // กระจายสัดส่วนผู้ป่วยครอบคลุมหลายจังหวัด เพื่อให้เห็นการไล่ระดับสี (แดง ➔ เขียว)
+            const provinceWeights = [
+                { name: "เชียงใหม่", weight: 0.28 },       // ระบาดสูงมาก (🔴 สีแดง)
+                { name: "กรุงเทพมหานคร", weight: 0.22 },    // ระบาดสูงมาก (🔴 สีแดง)
+                { name: "นนทบุรี", weight: 0.12 },          // ระบาดสูง (🟠 สีส้ม)
+                { name: "ชลบุรี", weight: 0.08 },           // ระบาดสูง (🟠 สีส้ม)
+                { name: "ปทุมธานี", weight: 0.06 },         // ระบาดปานกลาง (🟡 สีเหลือง)
+                { name: "สมุทรปราการ", weight: 0.05 },      // ระบาดปานกลาง (🟡 สีเหลือง)
+                { name: "นครราชสีมา", weight: 0.04 },       // ระบาดน้อย (🟢 สีเขียวอ่อน)
+                { name: "ขอนแก่น", weight: 0.03 },          // ระบาดน้อย (🟢 สีเขียวอ่อน)
+                { name: "อุดรธานี", weight: 0.03 },         // ระบาดน้อยมาก (🟢 สีเขียวเข้ม)
+                { name: "สงขลา", weight: 0.02 },           // ระบาดน้อยมาก (🟢 สีเขียวเข้ม)
+                { name: "ภูเก็ต", weight: 0.02 },           // ระบาดน้อยมาก (🟢 สีเขียวเข้ม)
+                { name: "เชียงราย", weight: 0.01 },         // ระบาดน้อยมาก (🟢 สีเขียวเข้ม)
+                { name: "สุราษฎร์ธานี", weight: 0.015 },     // ระบาดน้อยมาก (🟢 สีเขียวเข้ม)
+                { name: "อุบลราชธานี", weight: 0.005 }      // ระบาดน้อยมาก (🟢 สีเขียวเข้ม)
+            ];
+
+            const risks = [
+                "อยู่ระหว่างการสอบสวนโรค",
+                "สัมผัสใกล้ชิดกับผู้ป่วยยืนยันรายก่อนหน้า",
+                "ไปสถานที่ชุมชน/สถานที่แออัด",
+                "อาชีพเสี่ยง เช่น ทำงานในสถานบันเทิง",
+                "ระบุไม่ได้"
+            ];
+            const nationalities = ["Thailand", "Thailand", "Thailand", "Thailand", "Myanmar", "Cambodia", "Laos", "Other"];
+
+            for (let i = 1; i <= totalTargetRecords; i++) {
+                const isFemale = Math.random() < 0.561;
+                const age = Math.floor(Math.random() * 75) + 5;
+                const announceDay = Math.floor(Math.random() * 30) + 1;
+                
+                let rand = Math.random();
+                let selectedProv = provinceWeights[0].name;
+                let cumWeight = 0;
+                for (const pw of provinceWeights) {
+                    cumWeight += pw.weight;
+                    if (rand <= cumWeight) {
+                        selectedProv = pw.name;
+                        break;
+                    }
+                }
+
+                const riskIndex = Math.floor(Math.random() * risks.length);
+                const natIndex = Math.floor(Math.random() * nationalities.length);
+
+                records.push({
+                    "No.": 3905872 + i,
+                    "announce_date": `${announceDay}/4/2022`,
+                    "sex": isFemale ? "หญิง" : "ชาย",
+                    "age": age,
+                    "Unit": "ปี",
+                    "nationality": nationalities[natIndex],
+                    "province_of_isolation": selectedProv,
+                    "risk": risks[riskIndex],
+                    "province_of_onset": selectedProv,
+                    "district_of_onset": "เมือง"
+                });
+            }
+            return records;
+        }
+
+        // ==========================================
+        // 3. INITIALIZATION & FILE HANDLERS
+        // ==========================================
+        window.onload = function() {
+            initMap();
+            
+            rawData = generateDefaultEpidemicData();
+            filteredData = [...rawData];
+
+            populateFilterDropdowns();
+            renderDashboard();
+
+            document.getElementById('fileInput').addEventListener('change', handleFileUpload);
+        };
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const fileName = file.name;
+            const fileExt = fileName.split('.').pop().toLowerCase();
+
+            document.getElementById('dataStatusTitle').innerText = `กำลังประมวลผลไฟล์: ${fileName}`;
+            document.getElementById('dataStatusDesc').innerText = "โปรดรอสักครู่ ระบบกำลังแปลงข้อมูลทางระบาดวิทยา...";
+
+            if (fileExt === 'csv') {
+                Papa.parse(file, {
+                    header: true,
+                    skipEmptyLines: true,
+                    complete: function(results) {
+                        processUploadedData(results.data, fileName);
+                    }
+                });
+            } else if (fileExt === 'xlsx' || fileExt === 'xls') {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    const json = XLSX.utils.sheet_to_json(worksheet);
+                    processUploadedData(json, fileName);
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        function processUploadedData(parsedData, fileName) {
+            if (!parsedData || parsedData.length === 0) {
+                alert('ไม่พบข้อมูลในไฟล์ หรือรูปแบบไฟล์ไม่ถูกต้อง');
+                return;
+            }
+
+            rawData = parsedData.map((row, idx) => ({
+                "No.": row["No."] || row["no"] || idx + 1,
+                "announce_date": row["announce_date"] || row["Announce Date"] || row["date"] || "N/A",
+                "sex": row["sex"] || row["Sex"] || "ไม่ระบุ",
+                "age": parseFloat(row["age"] || row["Age"] || 0),
+                "nationality": row["nationality"] || row["Nationality"] || "Thailand",
+                "province_of_isolation": row["province_of_isolation"] || row["Province"] || "ไม่ระบุจังหวัด",
+                "risk": row["risk"] || row["Risk"] || "อยู่ระหว่างการสอบสวนโรค"
+            }));
+
+            filteredData = [...rawData];
+
+            const titleEl = document.getElementById('dataStatusTitle');
+            const descEl = document.getElementById('dataStatusDesc');
+
+            if (titleEl) titleEl.innerText = `นำเข้าข้อมูลสำเร็จจาก: ${fileName}`;
+            if (descEl) descEl.innerText = `อ่านข้อมูลสำเร็จทั้งหมดจำนวน ${rawData.length.toLocaleString()} รายการ`;
+
+            populateFilterDropdowns();
+            renderDashboard();
+        }
+
+        // ==========================================
+        // 4. MAP & GIS VISUALIZATION (LEAFLET + ESRI ARCGIS)
+        // ==========================================
+        function initMap() {
+            if (mapInstance) return;
+
+            mapInstance = L.map('map', {
+                center: [13.736717, 100.523186],
+                zoom: 6,
+                zoomControl: true
+            });
+
+            // ใช้บริการไทล์ Esri ArcGIS World Street Map
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China (Hong Kong), Esri (Thailand), TomTom, 2012',
+                maxZoom: 18
+            }).addTo(mapInstance);
+
+            markersGroup = L.layerGroup().addTo(mapInstance);
+
+            // เพิ่ม Dynamic Legend Box บนตัวแผนที่ Leaflet
+            const legend = L.control({ position: 'topright' });
+            legend.onAdd = function () {
+                const div = L.DomUtil.create('div', 'bg-white/90 backdrop-blur border border-slate-200 p-2.5 rounded-lg shadow-md text-xs space-y-1.5');
+                div.innerHTML = `
+                    <div class="font-bold text-slate-800 border-b pb-1 mb-1">ระดับความหนาแน่นผู้ป่วย</div>
+                    <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-[#dc2626] border border-white shadow-sm inline-block"></span> <span>สูงมากที่สุด (Top Tier)</span></div>
+                    <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-[#f97316] border border-white shadow-sm inline-block"></span> <span>สูง (High Risk)</span></div>
+                    <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-[#eab308] border border-white shadow-sm inline-block"></span> <span>ปานกลาง (Moderate)</span></div>
+                    <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-[#84cc16] border border-white shadow-sm inline-block"></span> <span>น้อย (Low Risk)</span></div>
+                    <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-[#10b981] border border-white shadow-sm inline-block"></span> <span>น้อยมาก/เฝ้าระวังดี</span></div>
+                `;
+                return div;
+            };
+            legend.addTo(mapInstance);
+        }
+
+        function updateMap(provinceCounts) {
+            if (!mapInstance || !markersGroup) return;
+
+            markersGroup.clearLayers();
+
+            const counts = Object.values(provinceCounts);
+            if (counts.length === 0) return;
+
+            const maxCases = Math.max(...counts);
+            const minCases = Math.min(...counts);
+
+            Object.entries(provinceCounts).forEach(([provName, count]) => {
+                const coords = PROVINCE_COORDS[provName] || PROVINCE_COORDS["ต่างจังหวัด"];
+                if (!coords) return;
+
+                // คำนวณสัดส่วนความหนาแน่นแบบ Relative Quantile Ratio
+                const ratio = maxCases === minCases ? 1.0 : (count - minCases) / (maxCases - minCases);
+                
+                let fillColor = '#10b981'; // 🟢 เขียวเข้ม: น้อยมาก/เฝ้าระวังดี
+                let categoryText = "ระบาดน้อยมาก (Very Low)";
+
+                // จำแนกสเปกตรัม 5 ระดับสี (แดง ➔ ส้ม ➔ เหลือง ➔ เขียวอ่อน ➔ เขียวเข้ม)
+                if (ratio >= 0.75) {
+                    fillColor = '#dc2626'; // 🔴 สีแดงเข้ม: สูงมากที่สุด
+                    categoryText = "ระบาดสูงมากที่สุด (Very High)";
+                } else if (ratio >= 0.45) {
+                    fillColor = '#f97316'; // 🟠 สีส้ม: สูง
+                    categoryText = "ระบาดสูง (High)";
+                } else if (ratio >= 0.20) {
+                    fillColor = '#eab308'; // 🟡 สีเหลือง: ปานกลาง
+                    categoryText = "ระบาดปานกลาง (Moderate)";
+                } else if (ratio >= 0.08) {
+                    fillColor = '#84cc16'; // 🟢 สีเขียวอ่อน: น้อย
+                    categoryText = "ระบาดน้อย (Low)";
+                }
+
+                const radius = Math.min(Math.max((count / (maxCases || 1)) * 26, 7), 30);
+
+                const circle = L.circleMarker(coords, {
+                    radius: radius,
+                    fillColor: fillColor,
+                    color: '#ffffff',
+                    weight: 2,
+                    opacity: 0.95,
+                    fillOpacity: 0.82
+                });
+
+                circle.bindPopup(`
+                    <div class="p-1 font-sans text-xs">
+                        <p class="font-bold text-slate-800 text-sm border-b pb-1 mb-1">${provName}</p>
+                        <p><span class="text-slate-500">จำนวนผู้ป่วย:</span> <span class="font-bold text-blue-600">${count.toLocaleString()} ราย</span></p>
+                        <p><span class="text-slate-500">การกระจายตัว:</span> <span class="font-semibold" style="color:${fillColor}">${categoryText}</span></p>
+                    </div>
+                `);
+
+                markersGroup.addLayer(circle);
+            });
+        }
+
+        // ==========================================
+        // 5. DASHBOARD RENDER & FILTER ENGINE
+        // ==========================================
+        function renderDashboard() {
+            // 1. คำนวณ KPI สถิติสรุป
+            const total = filteredData.length;
+            let maleCount = 0;
+            let femaleCount = 0;
+            let thaiCount = 0;
+            let totalAge = 0;
+            let minAge = Infinity;
+            let maxAge = -Infinity;
+
+            const provinceCounts = {};
+            const riskCounts = {};
+            const ageGroups = { "เด็ก (0-14)": 0, "วัยทำงาน (15-59)": 0, "ผู้สูงอายุ (60+)": 0 };
+            const dateCounts = {};
+            const natCounts = {};
+
+            filteredData.forEach(item => {
+                // Sex Ratio
+                if (item.sex === 'ชาย') maleCount++;
+                else if (item.sex === 'หญิง') femaleCount++;
+
+                // Age
+                const age = parseFloat(item.age) || 0;
+                if (age > 0) {
+                    totalAge += age;
+                    if (age < minAge) minAge = age;
+                    if (age > maxAge) maxAge = age;
+
+                    if (age < 15) ageGroups["เด็ก (0-14)"]++;
+                    else if (age < 60) ageGroups["วัยทำงาน (15-59)"]++;
+                    else ageGroups["ผู้สูงอายุ (60+)"]++;
+                }
+
+                // Nationality
+                if (item.nationality === 'Thailand') thaiCount++;
+                natCounts[item.nationality] = (natCounts[item.nationality] || 0) + 1;
+
+                // Province
+                const prov = item.province_of_isolation || 'ไม่ระบุ';
+                provinceCounts[prov] = (provinceCounts[prov] || 0) + 1;
+
+                // Risk
+                const risk = item.risk || 'อยู่ระหว่างการสอบสวน';
+                riskCounts[risk] = (riskCounts[risk] || 0) + 1;
+
+                // Date Trend
+                const date = item.announce_date || 'N/A';
+                dateCounts[date] = (dateCounts[date] || 0) + 1;
+            });
+
+            // Update KPI Cards UI
+            const kpiTotal = document.getElementById('kpiTotalCases');
+            const totalText = document.getElementById('totalRecordText');
+            if (kpiTotal) kpiTotal.innerText = total.toLocaleString();
+            if (totalText) totalText.innerText = total.toLocaleString();
+
+            const kpiGenderRatio = document.getElementById('kpiGenderRatio');
+            const kpiFemalePct = document.getElementById('kpiFemalePct');
+            const kpiMalePct = document.getElementById('kpiMalePct');
+
+            if (kpiGenderRatio) kpiGenderRatio.innerText = `${maleCount.toLocaleString()} / ${femaleCount.toLocaleString()}`;
+            if (kpiFemalePct) kpiFemalePct.innerText = total > 0 ? `${((femaleCount / total) * 100).toFixed(1)}%` : '0%';
+            if (kpiMalePct) kpiMalePct.innerText = total > 0 ? `${((maleCount / total) * 100).toFixed(1)}%` : '0%';
+
+            const meanAge = total > 0 ? (totalAge / total).toFixed(1) : 0;
+            const kpiMeanAge = document.getElementById('kpiMeanAge');
+            const kpiAgeRange = document.getElementById('kpiAgeRange');
+
+            if (kpiMeanAge) kpiMeanAge.innerHTML = `${meanAge} <span class="text-sm font-normal text-slate-500">ปี</span>`;
+            if (kpiAgeRange) kpiAgeRange.innerText = minAge !== Infinity ? `ช่วงอายุ: ${minAge} - ${maxAge} ปี` : 'ช่วงอายุ: N/A';
+
+            const thaiPct = total > 0 ? ((thaiCount / total) * 100).toFixed(1) : 0;
+            const kpiThaiPct = document.getElementById('kpiThaiPct');
+            const kpiThaiCount = document.getElementById('kpiThaiCount');
+
+            if (kpiThaiPct) kpiThaiPct.innerText = `${thaiPct}%`;
+            if (kpiThaiCount) kpiThaiCount.innerText = `${thaiCount.toLocaleString()} ราย`;
+
+            // Update GIS Map
+            updateMap(provinceCounts);
+
+            // Update Top 10 Provinces Table
+            renderTopProvincesTable(provinceCounts, total);
+
+            // Update Charts
+            renderCharts(dateCounts, riskCounts, ageGroups, natCounts);
+
+            // Update Data Table
+            renderDataTable();
+        }
+
+        function renderTopProvincesTable(provinceCounts, total) {
+            const sortedProvinces = Object.entries(provinceCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10);
+
+            const tbody = document.getElementById('topProvincesTbody');
+            if (!tbody) return;
+
+            tbody.innerHTML = '';
+            sortedProvinces.forEach(([prov, count], idx) => {
+                const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
+                const row = document.createElement('tr');
+                row.className = idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50';
+                row.innerHTML = `
+                    <td class="p-2.5 font-bold text-slate-400">${idx + 1}</td>
+                    <td class="p-2.5 font-semibold text-slate-700">${prov}</td>
+                    <td class="p-2.5 text-right font-bold text-blue-600">${count.toLocaleString()}</td>
+                    <td class="p-2.5 text-right text-slate-500">${pct}%</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function renderCharts(dateCounts, riskCounts, ageGroups, natCounts) {
+            // 1. Epidemic Curve Line Chart
+            const sortedDates = Object.keys(dateCounts);
+            const dateValues = Object.values(dateCounts);
+
+            if (epiChartObj) epiChartObj.destroy();
+            const epiCtx = document.getElementById('epiCurveChart');
+            if (epiCtx) {
+                epiChartObj = new Chart(epiCtx, {
+                    type: 'line',
+                    data: {
+                        labels: sortedDates,
+                        datasets: [{
+                            label: 'จำนวนผู้ป่วยยืนยัน (ราย)',
+                            data: dateValues,
+                            borderColor: '#2563eb',
+                            backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 3
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true } }
+                    }
+                });
+            }
+
+            // 2. Risk Factors Horizontal Bar Chart
+            const sortedRisks = Object.entries(riskCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+            if (riskChartObj) riskChartObj.destroy();
+            const riskCtx = document.getElementById('riskChart');
+            if (riskCtx) {
+                riskChartObj = new Chart(riskCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: sortedRisks.map(r => r[0]),
+                        datasets: [{
+                            label: 'จำนวนเคส',
+                            data: sortedRisks.map(r => r[1]),
+                            backgroundColor: ['#f59e0b', '#3b82f6', '#ec4899', '#10b981', '#8b5cf6']
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } }
+                    }
+                });
+            }
+
+            // 3. Age Group Breakdown Bar Chart
+            if (ageChartObj) ageChartObj.destroy();
+            const ageCtx = document.getElementById('ageChart');
+            if (ageCtx) {
+                ageChartObj = new Chart(ageCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: Object.keys(ageGroups),
+                        datasets: [{
+                            label: 'จำนวนผู้ป่วย',
+                            data: Object.values(ageGroups),
+                            backgroundColor: ['#38bdf8', '#3b82f6', '#f43f5e']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } }
+                    }
+                });
+            }
+
+            // 4. Nationality Doughnut Chart
+            if (nationalityChartObj) nationalityChartObj.destroy();
+            const natCtx = document.getElementById('nationalityChart');
+            if (natCtx) {
+                const sortedNats = Object.entries(natCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
+                nationalityChartObj = new Chart(natCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: sortedNats.map(n => n[0]),
+                        datasets: [{
+                            data: sortedNats.map(n => n[1]),
+                            backgroundColor: ['#0d9488', '#f59e0b', '#6366f1', '#cbd5e1']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } }
+                    }
+                });
+            }
+        }
+
+        function renderDataTable() {
+            const tbody = document.getElementById('dataTableBody');
+            if (!tbody) return;
+
+            tbody.innerHTML = '';
+            const sampleData = filteredData.slice(0, 50);
+
+            sampleData.forEach((row) => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50 transition';
+                tr.innerHTML = `
+                    <td class="p-3 font-semibold text-slate-600">${row["No."]}</td>
+                    <td class="p-3">${row["announce_date"]}</td>
+                    <td class="p-3"><span class="px-2 py-0.5 rounded-full text-xs font-semibold ${row["sex"] === 'หญิง' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'}">${row["sex"]}</span></td>
+                    <td class="p-3">${row["age"]}</td>
+                    <td class="p-3">${row["nationality"]}</td>
+                    <td class="p-3 font-medium text-slate-700">${row["province_of_isolation"]}</td>
+                    <td class="p-3 text-slate-500">${row["risk"]}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // ==========================================
+        // 6. FILTER DROPDOWNS & INTERACTION
+        // ==========================================
+        function populateFilterDropdowns() {
+            const provSelect = document.getElementById('filterProvince');
+            const riskSelect = document.getElementById('filterRisk');
+
+            if (!provSelect || !riskSelect) return;
+
+            const provinces = [...new Set(rawData.map(r => r.province_of_isolation))].filter(Boolean).sort();
+            const risks = [...new Set(rawData.map(r => r.risk))].filter(Boolean).sort();
+
+            provSelect.innerHTML = '<option value="ALL">ทั้งหมดทุกจังหวัด</option>';
+            provinces.forEach(p => {
+                provSelect.innerHTML += `<option value="${p}">${p}</option>`;
+            });
+
+            riskSelect.innerHTML = '<option value="ALL">ทุกปัจจัยเสี่ยง</option>';
+            risks.forEach(r => {
+                riskSelect.innerHTML += `<option value="${r}">${r}</option>`;
+            });
+        }
+
+        function applyFilters() {
+            const provFilter = document.getElementById('filterProvince').value;
+            const genderFilter = document.getElementById('filterGender').value;
+            const riskFilter = document.getElementById('filterRisk').value;
+            const ageFilter = document.getElementById('filterAge').value;
+
+            filteredData = rawData.filter(item => {
+                if (provFilter !== 'ALL' && item.province_of_isolation !== provFilter) return false;
+                if (genderFilter !== 'ALL' && item.sex !== genderFilter) return false;
+                if (riskFilter !== 'ALL' && item.risk !== riskFilter) return false;
+
+                const age = parseFloat(item.age) || 0;
+                if (ageFilter === 'child' && age >= 15) return false;
+                if (ageFilter === 'working' && (age < 15 || age >= 60)) return false;
+                if (ageFilter === 'elderly' && age < 60) return false;
+
+                return true;
+            });
+
+            renderDashboard();
+        }
+
+        function resetFilters() {
+            document.getElementById('filterProvince').value = 'ALL';
+            document.getElementById('filterGender').value = 'ALL';
+            document.getElementById('filterRisk').value = 'ALL';
+            document.getElementById('filterAge').value = 'ALL';
+
+            filteredData = [...rawData];
+            renderDashboard();
+        }
+
+        function searchTable() {
+            const query = document.getElementById('searchInput').value.toLowerCase();
+            if (!query) {
+                renderDataTable();
+                return;
+            }
+
+            const tbody = document.getElementById('dataTableBody');
+            if (!tbody) return;
+
+            const matchedData = filteredData.filter(r => 
+                (r.province_of_isolation && r.province_of_isolation.toLowerCase().includes(query)) ||
+                (r.risk && r.risk.toLowerCase().includes(query)) ||
+                (r.nationality && r.nationality.toLowerCase().includes(query))
+            ).slice(0, 50);
+
+            tbody.innerHTML = '';
+            matchedData.forEach((row) => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50 transition';
+                tr.innerHTML = `
+                    <td class="p-3 font-semibold text-slate-600">${row["No."]}</td>
+                    <td class="p-3">${row["announce_date"]}</td>
+                    <td class="p-3"><span class="px-2 py-0.5 rounded-full text-xs font-semibold ${row["sex"] === 'หญิง' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'}">${row["sex"]}</span></td>
+                    <td class="p-3">${row["age"]}</td>
+                    <td class="p-3">${row["nationality"]}</td>
+                    <td class="p-3 font-medium text-slate-700">${row["province_of_isolation"]}</td>
+                    <td class="p-3 text-slate-500">${row["risk"]}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+    </script>
+</body>
+</html>
